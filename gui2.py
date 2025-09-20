@@ -7,7 +7,7 @@ import os
 import joblib
 import numpy as np
 import math
-model = joblib.load("malware_model.pkl")
+model = joblib.load("malware_model_new.pkl")
 global process_rtm
 process_rtm = None
 
@@ -54,19 +54,22 @@ def execute_engine(file_path, output_text):
         process.stdout.close()
         process.wait()
 
-        # ✅ Outer try block properly indented
         try:
             features = extract_features_single_file(file_path)
             prediction = model.predict([features])[0]
+
             if prediction == 1:
                 output_text.insert(END, "\n⚠️ [ML] Warning: File is classified as MALICIOUS.\n")
             else:
                 output_text.insert(END, "\n✅ [ML] Safe: File is classified as BENIGN.\n")
 
             # ➕ ML-YARA rule check
-            rules_flagged = ml_yara_rules(features)
+            rules_flagged, accuracy = ml_yara_rules(features)
             if rules_flagged:
                 output_text.insert(END, f"\n[ML-YARA] Suspicious Rules Triggered: {', '.join(rules_flagged)}\n")
+
+            # ➕ Model accuracy display
+            output_text.insert(END, f"\n[ML-YARA] Model Accuracy: {accuracy*100:.2f}%\n")    
 
             # ➕ Confidence score
             try:
@@ -86,17 +89,25 @@ def execute_engine(file_path, output_text):
     else:
         file_label.config(text="No path selected")
 
+
 def ml_yara_rules(features):
     entropy, size, *byte_hist = features
     triggered = []
 
-    if entropy > 7.5:
+    if entropy > 0.94:
         triggered.append("High Entropy")
+
     if size > 1_000_000:
         triggered.append("Large File Size")
-    if max(byte_hist) > 0.1:
+
+    if size > 1024 and entropy < 0.8 and max(byte_hist) > 0.3:
         triggered.append("Suspicious Byte Pattern")
-    return triggered
+
+    # Accuracy from your notebook
+    accuracy = 0.96
+
+    return triggered, accuracy
+
 
 def calculate_entropy(data):
     if not data:
@@ -110,8 +121,8 @@ def calculate_entropy(data):
             continue
         p = count / len(data)
         entropy -= p * math.log2(p)
-    return entropy
-
+    return entropy / 8 
+    
 def extract_features_single_file(file_path):
     with open(file_path, 'rb') as f:
         content = f.read()
@@ -261,7 +272,7 @@ directory_upload_page = Frame(root, bg="#262626")
 rtm_page = Frame(root, bg="#262626")
 
 # Home page
-my_label = Label(root, text="Best AV in the world", font=("Helvetica", 50, "bold"), bg="#262626", fg="white")
+my_label = Label(root, text="BlackSwan Antivirus", font=("Helvetica", 50, "bold"), bg="#262626", fg="white")
 my_label.pack(pady=10)
 rtm_notif_on_root.pack()
 
