@@ -1,7 +1,10 @@
-First we will load the payloads in our av folder--> make a extract-features.py file and ctrl+v the code (present in repo)-->
-run the code in terminal with neccessary py enviroment(note: if it shows no module name joblib,etc, etc just pip install joblib (refer to chatgpt )--> 
-a csv file will be loaded automatically check in av -->load the csv file in desktop amd make changes (make a label column  mark the malicious as 1 and 0 as bening manually in csv file) --> then train the ML model in jupyter notebook model.pkl file will be saved
--->that pkl(pickle) will now be integrated with our gui (refer to gui2.py and copy paste it)--> result shown after running python3 gui2.py
+1. First we will load the payloads in our av folder-->
+2. make a extract-features.py file and ctrl+v the code (present in repo)-->
+3. run the code in terminal with neccessary py enviroment(note: if it shows no module name joblib,etc, etc just pip install joblib (refer to chatgpt )--> 
+4. a csv file will be loaded automatically check in av -->
+5. load the csv file in desktop amd make changes (make a label column  mark the malicious as 1 and 0 as bening manually in csv file) -->
+6. then train the ML model in jupyter notebook model.pkl file will be saved-->
+7. that pkl(pickle) will now be integrated with our gui (refer to gui2.py and copy paste it)--> result shown after running python3 gui2.py
 
 
  rest coming soonn...for directory scanning
