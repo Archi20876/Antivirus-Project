@@ -7,6 +7,9 @@ import os
 import joblib
 import numpy as np
 import math
+import signal
+import time
+from extract_features_directory import extract_directory_features
 model = joblib.load("malware_model_new.pkl")
 global process_rtm
 process_rtm = None
@@ -21,8 +24,15 @@ root.configure(bg="#262626")
 file_path = ""
 
 # Set proper absolute path for your engine binaries
-ENGINE_PATH = "/home/archita/antivirus_project/engine"   # Engine path
-ENGINE_RTM_PATH = "/home/archita/antivirus_project/RTM"  # RTM
+ENGINE_PATH = "/home/archita/antivirus_project/engine"   # Engine path (unchanged)
+ENGINE_RTM_PATH = "/home/archita/antivirus_project/rtm_userip"  # <-- compiled rtm binary
+# Load the new directory model
+try:
+    directory_model = joblib.load("malware_directory_model.pkl")
+    print("✅ Directory malware model loaded successfully.")
+except FileNotFoundError:
+    directory_model = None
+    print("❌ Warning: 'malware_directory_model.pkl' not found. Directory scanning will be disabled.")
 
 def open_file():
     global file_path
@@ -43,7 +53,7 @@ def open_directory():
 def execute_engine(file_path, output_text):
     if file_path:
         file_label.config(text=file_path)
-        process = subprocess.Popen([ENGINE_PATH, file_path], stdout=subprocess.PIPE, universal_newlines=True)
+        process = subprocess.Popen([ENGINE_PATH, file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         while True:
             output_line = process.stdout.readline()
             if output_line == '' and process.poll() is not None:
@@ -51,7 +61,10 @@ def execute_engine(file_path, output_text):
             if output_line:
                 output_text.insert(END, output_line)
                 output_text.see(END)
-        process.stdout.close()
+        try:
+            process.stdout.close()
+        except:
+            pass
         process.wait()
 
         try:
@@ -59,7 +72,7 @@ def execute_engine(file_path, output_text):
             prediction = model.predict([features])[0]
 
             if prediction == 1:
-                output_text.insert(END, "\n⚠️ [ML] Warning: File is classified as MALICIOUS.\n")
+                output_text.insert(END, "\n⚠️ [ML] Warning: File is classified as MALICIOUS.\n \n The file has been quarantined. \n")
             else:
                 output_text.insert(END, "\n✅ [ML] Safe: File is classified as BENIGN.\n")
 
@@ -108,7 +121,6 @@ def ml_yara_rules(features):
 
     return triggered, accuracy
 
-
 def calculate_entropy(data):
     if not data:
         return 0
@@ -136,27 +148,101 @@ def extract_features_single_file(file_path):
     byte_hist = [x/size for x in byte_hist]  # Normalize histogram
 
     return [entropy, size] + byte_hist
-       
+    
+def execute_directory_scan(dir_path, output_text):
+    """
+    Executes the ML-based directory scan and updates the GUI.
+    """
+    if not dir_path or not os.path.isdir(dir_path):
+        output_text.insert(END, "❌ Error: Please select a valid directory path.\n")
+        return
+
+    if not directory_model:
+        output_text.insert(END, "❌ Error: Directory ML model is not loaded. Cannot scan.\n")
+        return
+
+    output_text.insert(END, f"[*] Scanning directory: {dir_path}\n")
+    try:
+        # Step 1: Extract features
+        features_dict = extract_directory_features(dir_path)
+
+        # Step 2: Prepare features in the correct order for the model
+        # NOTE: The order here must match the order used during model training!
+        features_list = [
+            features_dict["total_files"],
+            features_dict["total_executables"],
+            features_dict["avg_size"],
+            features_dict["avg_entropy"],
+            features_dict["high_entropy_files"],
+            features_dict["suspicious_file_names"]
+        ]
+
+        # Step 3: Make a prediction using the trained model
+        prediction = directory_model.predict([features_list])[0]
+        
+        # Step 4: Display the result on the GUI
+        if prediction == 1:
+            output_text.insert(END, "\n⚠️ [ML] Warning: Directory is classified as MALICIOUS.\n \n The file has been quarantined. \n")
+        else:
+            output_text.insert(END, "\n✅ [ML] Safe: Directory is classified as BENIGN.\n")
+            
+        # Optional: Add confidence score
+        try:
+            prob = directory_model.predict_proba([features_list])[0][1]
+            output_text.insert(END, f"[Confidence] Probability of being malicious: {prob:.2f}\n")
+        except:
+            pass # Skips if the model doesn't support predict_proba
+
+    except Exception as e:
+        output_text.insert(END, f"\n[ML] Directory scanning failed: {e}\n")    
+    
 
 def execute_engine_rtm(file_path, output_text):
+    """
+    Start an RTM process for a single directory (streams output to 'output_text').
+    Uses global process_rtm (will be replaced if already running).
+    """
     if file_path:
         global process_rtm
         file_label.config(text=file_path)
-        process_rtm = subprocess.Popen([ENGINE_RTM_PATH, file_path], stdout=subprocess.PIPE, universal_newlines=True)
+        args = [ENGINE_RTM_PATH, file_path]
+        try:
+            process_rtm = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        except Exception as e:
+            output_text.insert(END, f"[!] Failed to start RTM: {e}\n")
+            return
+
         def read_output():
-            while True:
-                output_line = process_rtm.stdout.readline()
-                if output_line == '' and process_rtm.poll() is not None:
-                    break
-                if output_line:
-                    output_text_rtm.insert(END, output_line)
-                    output_text_rtm.see(END)
-            process_rtm.stdout.close()
-        output_reader = threading.Thread(target=read_output)
-        output_reader.daemon = True
-        output_reader.start()
+            global process_rtm
+            try:
+                for line in process_rtm.stdout:
+                    if line:
+                        output_text.insert(END, line)
+                        output_text.see(END)
+            except Exception as e:
+                output_text.insert(END, f"[!] RTM read error: {e}\n")
+            finally:
+                try:
+                    process_rtm.stdout.close()
+                except:
+                    pass
+                # process ended; update UI from main thread
+                def on_exit():
+                    global process_rtm
+                    process_rtm = None
+                    switch_var.set(0)
+                    switch_button.config(text="Disabled", fg="Black")
+                root.after(0, on_exit)
+
+        t = threading.Thread(target=read_output, daemon=True)
+        t.start()
     else:
         file_label.config(text="No path selected")
+        
+def read_rtm_output(proc, text_widget):
+    for line in proc.stdout:
+        text_widget.insert("end", line)
+        text_widget.see("end")
 
 def toggle_win():
     menu = Frame(root,width=350,height=900,bg="#12c4c0")
@@ -211,43 +297,84 @@ def show_rtm_page():
     rtm_notif_on_root.pack_forget()
 
 def toggle_switch():
+    """
+    Start/stop RTM using the compiled rtm binary.
+    When enabling: collects directories from directory_listbox and starts rtm with all of them.
+    When disabling: tries polite shutdown (terminate) then force-kill if necessary.
+    """
     global process_rtm
     if switch_var.get() == 1:
         switch_button.config(text="Enabled", fg="#12c4c0")
-        # Extract all directory entries
         directories = directory_listbox.get(0, 'end')
         if not directories:
             output_text_rtm.insert(END, "[!] No directories selected for monitoring.\n")
+            # revert UI state
+            switch_var.set(0)
+            switch_button.config(text="Disabled", fg="Black")
             return
         
-        # Create a list: [ENGINE_RTM_PATH, dir1, dir2, ...]
-        args = [ENGINE_RTM_PATH] + [d.strip(';') for d in directories]
+        # Create argument list: [ENGINE_RTM_PATH, dir1, dir2, ...]
+        args = [ENGINE_RTM_PATH] + list(directories)
 
-        process_rtm = subprocess.Popen(args, stdout=subprocess.PIPE, universal_newlines=True)
+        try:
+            process_rtm = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        except Exception as e:
+            output_text_rtm.insert(END, f"[!] Failed to start RTM: {e}\n")
+            switch_var.set(0)
+            switch_button.config(text="Disabled", fg="Black")
+            return
+
+        def on_exit():
+            global process_rtm
+            process_rtm = None
+            switch_var.set(0)
+            switch_button.config(text="Disabled", fg="Black")
+            output_text_rtm.insert(END, "[+] RTM process exited.\n")
 
         def read_output():
-            while True:
-                output_line = process_rtm.stdout.readline()
-                if output_line == '' and process_rtm.poll() is not None:
-                    break
-                if output_line:
-                    output_text_rtm.insert(END, output_line)
-                    output_text_rtm.see(END)
-            process_rtm.stdout.close()
-        
-        output_reader = threading.Thread(target=read_output)
-        output_reader.daemon = True
+            global process_rtm
+            try:
+                for line in process_rtm.stdout:
+                    if line:
+                        output_text_rtm.insert(END, line)
+                        output_text_rtm.see(END)
+            except Exception as e:
+                output_text_rtm.insert(END, f"[!] RTM read error: {e}\n")
+            finally:
+                try:
+                    process_rtm.stdout.close()
+                except:
+                    pass
+                # schedule UI update on main thread
+                root.after(0, on_exit)
+
+        output_reader = threading.Thread(target=read_output, daemon=True)
         output_reader.start()
 
     else:
+        # turn off
         switch_button.config(text="Disabled", fg="Black")
         if process_rtm is not None:
-            process_rtm.kill()
+            output_text_rtm.insert(END, "[*] Stopping RTM process...\n")
+            try:
+                process_rtm.terminate()  # polite shutdown (SIGTERM)
+                try:
+                    process_rtm.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    output_text_rtm.insert(END, "[!] RTM did not stop; forcing kill.\n")
+                    process_rtm.kill()
+                    process_rtm.wait(timeout=3)
+            except Exception as e:
+                output_text_rtm.insert(END, f"[!] Error stopping RTM: {e}\n")
+            finally:
+                process_rtm = None
+                output_text_rtm.insert(END, "[+] RTM stopped.\n")
+
 
 def add_item():
-    rtm_dir_path = directory_entry.get()
+    rtm_dir_path = directory_entry.get().strip()
     if rtm_dir_path:
-        directory_listbox.insert(END, rtm_dir_path + ";")
+        directory_listbox.insert(END, rtm_dir_path)   # store raw path (no semicolon)
         directory_entry.delete(0, END)
 
 def delete_item():
@@ -322,8 +449,8 @@ image_button.pack(pady=10)
 
 image_button.bind("<Button-1>", lambda event: open_directory())
 
-my_button = Button(directory_upload_page, text="Upload", command=lambda: execute_engine(file_path, output_text_file), width=28, height=2)
-my_button.pack(pady=10)
+my_button = Button(directory_upload_page, text="Scan Directory", command=lambda: execute_directory_scan(file_path, output_text_directory), width=28, height=2)
+my_button.pack(pady=20) # This line makes the button appear
 
 my_label = Label(directory_upload_page, text="Scan results", font=("Helvetica", 30, "bold"), bg="#262626", fg="#12c4c0")
 my_label.pack(pady=20)
