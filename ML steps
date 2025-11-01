@@ -1,0 +1,5 @@
+First we will load the payloads in our av folder--> make a extract-features.py file and ctrl+v the code (present in repo)-->
+run the code in terminal with neccessary py enviroment(note: if it shows no module name joblib,etc, etc just pip install joblib (refer to chatgpt )--> 
+a csv file will be loaded automatically check in av --> then train the ML model in jupyter notebook model.pkl file will be saved
+-->that pkl(pickle) will now be inetgrated with our gui--> result shown after running python3 gui2.py
+ rest coming soonn...for directory scanning
