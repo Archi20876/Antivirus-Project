@@ -4,7 +4,9 @@ import subprocess
 from PIL import Image, ImageTk
 import threading
 import os
-from ml_engine import run_ml_scan
+from ML_engine import run_ml_scan
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 global process_rtm
 process_rtm = None
 
@@ -81,9 +83,10 @@ def execute_engine_directory(dir_path, output_text):
                     output_text.insert(END, output_line)
                     output_text.see(END)
             process.stdout.close()
-            process.wait()  
+            process.wait()
+            run_ml_scan(fpath, output_text)  
        
-def execute_engine_rtm(file_path, output_text):
+def execute_engine_rtm(file_path,output_text):
     if file_path:
         global process_rtm
         file_label.config(text=file_path)
