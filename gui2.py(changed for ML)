@@ -9,6 +9,8 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 global process_rtm
 process_rtm = None
+global process_hips
+process_hips = None
 
 root = Tk()
 
@@ -22,6 +24,7 @@ file_path = ""
 # Set proper absolute path for your engine binaries
 ENGINE_PATH = "/home/archita/Desktop/Antivirus/engine"   # Engine path
 ENGINE_RTM_PATH = "/home/archita/Desktop/Antivirus/rtM"  # RTM
+ENGINE_HIPS_PATH = "/home/archita/Desktop/Antivirus/hips" #hips.c
 
 def open_file():
     global file_path
@@ -121,11 +124,15 @@ def toggle_win():
 
     rlmonitor_button = Button(menu, text="Real-Time Monitoring",  command=show_rtm_page, width=40, height=3, fg="#262626", bg="#0f9d9a", activebackground="#12c4c0", activeforeground="#262626", border=2)
     rlmonitor_button.place(x=0, y=260)
+    
+    hips_button = Button(menu, text="HIPS", command=show_hips_page, width=40, height=3, fg="#262626", bg="#0f9d9a", activebackground="#12c4c0", activeforeground="#262626", border=2)
+    hips_button.place(x=0, y=320)
 
     def dele():
         File_button.destroy()
         Dir_button.destroy()
         rlmonitor_button.destroy()
+        hips_button.destroy()
         menu.destroy()
     
     global menu_close
@@ -139,24 +146,28 @@ def show_root():
     file_upload_page.pack_forget()
     directory_upload_page.pack_forget()
     rtm_page.pack_forget()
+    hips_page.pack_forget()
 
 def show_file_upload_page():
     file_upload_page.pack()
     directory_upload_page.pack_forget()
     rtm_page.pack_forget()
     rtm_notif_on_root.pack_forget()
+    hips_page.pack_forget()
 
 def show_directory_upload_page():
     file_upload_page.pack_forget()
     directory_upload_page.pack()
     rtm_page.pack_forget()
     rtm_notif_on_root.pack_forget()
+    hips_page.pack_forget()
 
 def show_rtm_page():
     file_upload_page.pack_forget()
     directory_upload_page.pack_forget()
     rtm_page.pack()
     rtm_notif_on_root.pack_forget()
+    hips_page.pack_forget()
 
 def toggle_switch():
     global process_rtm
@@ -206,6 +217,109 @@ def delete_item():
 def clear_rtm_output():
     output_text_rtm.delete(1.0, END)
 
+def hips_insert_line(line):
+    if "[HIGH]" in line:
+        tag = "high"
+    elif "[MEDIUM]" in line or "[RESPONSE]" in line:
+        tag = "medium"
+    elif "[LOW]" in line:
+        tag = "low"
+    else:
+        tag = "info"
+    output_text_hips.insert(END, line, tag)
+    output_text_hips.see(END)
+    
+# [HIPS INTEGRATION] Background thread: reads hips stdout line-by-line.
+def hips_read_output():
+    global process_hips
+    in_suspended_block = False
+    suspended_lines = []
+    while True:
+        output_line = process_hips.stdout.readline()
+        if output_line == '' and process_hips.poll() is not None:
+            break
+        if not output_line:
+            continue
+        if "[HIPS][SUSPENDED_LIST]" in output_line and "END" not in output_line:
+            in_suspended_block = True
+            suspended_lines = []
+            continue
+        if "[HIPS][SUSPENDED_LIST_END]" in output_line:
+            in_suspended_block = False
+            root.after(0, lambda lines=suspended_lines: hips_refresh_suspended_listbox(lines))
+            continue
+        if in_suspended_block:
+            suspended_lines.append(output_line.strip())
+            continue
+        root.after(0, lambda l=output_line: hips_insert_line(l))
+    process_hips.stdout.close()
+    
+# [HIPS INTEGRATION] Populate the suspended-process listbox from parsed lines.
+def hips_refresh_suspended_listbox(lines):
+    hips_suspended_listbox.delete(0, END)
+    for line in lines:
+        if line:
+            hips_suspended_listbox.insert(END, line)
+            
+# [HIPS INTEGRATION] Send a text command to hips stdin.
+def hips_send_command(cmd):
+    global process_hips
+    if process_hips and process_hips.poll() is None:
+        try:
+            process_hips.stdin.write(cmd + "\n")
+            process_hips.stdin.flush()
+        except Exception:
+            pass
+            
+# [HIPS INTEGRATION] Toggle HIPS on/off.
+def toggle_hips():
+    global process_hips
+    if hips_switch_var.get() == 1:
+        hips_switch_button.config(text="Enabled", fg="#12c4c0")
+        if os.geteuid() != 0:
+            hips_insert_line("[!] Warning: not running as root. SIGSTOP/SIGKILL may fail on other users' processes.\n")
+        process_hips = subprocess.Popen(
+            [ENGINE_HIPS_PATH],
+            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            universal_newlines=True
+        )
+        reader = threading.Thread(target=hips_read_output, daemon=True)
+        reader.start()
+    else:
+        hips_switch_button.config(text="Disabled", fg="Black")
+        if process_hips is not None:
+            hips_send_command("q")
+            process_hips.kill()
+            
+# [HIPS INTEGRATION] Ask hips to send its suspended list.
+def hips_refresh_list():
+    hips_send_command("list")
+    
+# [HIPS INTEGRATION] Resume the process selected in the suspended listbox.
+def hips_resume_selected():
+    selection = hips_suspended_listbox.curselection()
+    if not selection:
+        return
+    entry = hips_suspended_listbox.get(selection[0])
+    for part in entry.split():
+        if part.startswith("pid="):
+            pid = part.split("=")[1]
+            hips_send_command(f"resume {pid}")
+            hips_refresh_list()
+            break
+            
+# [HIPS INTEGRATION] Clear the HIPS alert log.
+def clear_hips_output():
+    output_text_hips.delete(1.0, END)
+    
+# [HIPS INTEGRATION] Show the HIPS page.
+def show_hips_page():
+    file_upload_page.pack_forget()
+    directory_upload_page.pack_forget()
+    rtm_page.pack_forget()
+    rtm_notif_on_root.pack_forget()
+    hips_page.pack()    
 
 # Menu button image
 tmp_pic = Image.open("Images/menu_open.png")
@@ -218,6 +332,7 @@ file_upload_page = Frame(root, bg="#262626")
 rtm_notif_on_root = Frame(root, bg="#262626")
 directory_upload_page = Frame(root, bg="#262626")
 rtm_page = Frame(root, bg="#262626")
+hips_page = Frame(root, bg="#262626")
 
 # Home page
 my_label = Label(root, text="BlackSwan Antivirus", font=("Helvetica", 50, "bold"), bg="#262626", fg="white")
@@ -304,5 +419,40 @@ add_button.pack(side=LEFT)
 
 delete_button = Button(button_frame, text="Delete", command=delete_item, border=0, width=20, height=3)
 delete_button.pack(side=LEFT, padx=10)
+
+# [HIPS INTEGRATION] ── HIPS page ────────────────────────────────────────────
+my_label = Label(hips_page, text="HIPS — Host Intrusion Prevention", font=("Helvetica", 36, "bold"), bg="#262626", fg="#12c4c0")
+my_label.pack(pady=10)
+
+hips_switch_var = IntVar()
+hips_switch_button = Checkbutton(hips_page, text="Disabled", variable=hips_switch_var, command=toggle_hips, border=0, font=("Helvetica", 20, "bold"), width=40, indicatoron=False)
+hips_switch_button.pack(pady=5)
+
+my_label = Label(hips_page, text="Alert Log", font=("Helvetica", 20, "bold"), bg="#262626", fg="#12c4c0")
+my_label.pack(pady=5)
+
+output_text_hips = Text(hips_page, width=100, height=10, wrap='word', font=("Helvetica", 12), border=10, bg="#1a1a1a", fg="white")
+output_text_hips.pack(pady=5)
+
+output_text_hips.tag_config("high",   foreground="#ff4444")
+output_text_hips.tag_config("medium", foreground="#ffa500")
+output_text_hips.tag_config("low",    foreground="#aaaaaa")
+output_text_hips.tag_config("info",   foreground="#12c4c0")
+
+clear_hips_button = Button(hips_page, text="Clear Log", command=clear_hips_output, border=0, width=20, height=2)
+clear_hips_button.pack(pady=3)
+
+my_label = Label(hips_page, text="Suspended Processes", font=("Helvetica", 18, "bold"), bg="#262626", fg="#12c4c0")
+my_label.pack(pady=8)
+
+hips_suspended_listbox = Listbox(hips_page, border=0, width=100, height=5, bg="#1a1a1a", fg="white", font=("Helvetica", 12))
+hips_suspended_listbox.pack(pady=5)
+
+hips_btn_frame = Frame(hips_page, bg="#262626")
+hips_btn_frame.pack(pady=5)
+
+Button(hips_btn_frame, text="Refresh List", command=hips_refresh_list, border=0, width=18, height=2).pack(side=LEFT, padx=5)
+Button(hips_btn_frame, text="Resume Selected", command=hips_resume_selected, border=0, width=18, height=2).pack(side=LEFT, padx=5)
+# [HIPS INTEGRATION] ── end of HIPS page ─────────────────────────────────────
 
 root.mainloop()
