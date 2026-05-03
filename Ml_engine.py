@@ -1,11 +1,15 @@
+from extract_features import extract_features_from_content
 import math
 import numpy as np
 import pandas as pd
 from datetime import datetime
 import joblib
 import warnings
+from sklearn.exceptions import InconsistentVersionWarning
+warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+import os
 
-model = joblib.load("/home/archita/Desktop/Antivirus/antivirus_model .pkl")
+model = joblib.load("/home/archita/Desktop/Antivirus/antivirus_model2.pkl")
 
 # ── If your model is loaded elsewhere, import/pass it in. ──────────────────
 # This file assumes `model` is loaded in gui2.py and passed to run_ml_scan().
@@ -50,9 +54,16 @@ def ml_yara_rules(features):
     return triggered, accuracy
 
 
-def run_ml_scan(file_path, output_text):
+def run_ml_scan(file_path, output_text, file_content=None):
     try:
-        features = extract_features_single_file(file_path)
+        # ── Memory-first fix (no file path dependency) ───────────
+        if file_content is not None:
+            features = extract_features_from_content(file_content)  # ✅ use memory
+        elif os.path.exists(file_path):
+            features = extract_features_single_file(file_path)      # ✅ fallback
+        else:
+            output_text.insert("end", "\n[ML] File not found, skipping.\n")
+            return
 
         # ✅ Use exact feature names from model, wrapped in DataFrame
         features_df = pd.DataFrame([features], columns=list(model.feature_names_in_))
