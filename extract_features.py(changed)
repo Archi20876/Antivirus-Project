@@ -1,4 +1,3 @@
-/*Note:- we need to work on 1000+ dataset 50:50 Malcious and bening is needed to avoid overfitting . So download the payloads . and run them again keeping everyother process as it is.*/
 import os
 import math
 import numpy as np
@@ -43,6 +42,18 @@ def extract_features(file_path):
     except Exception as e:
         print(f"Error processing {file_path}: {e}")
         return None
+        
+def extract_features_from_content(content):
+    """Same as extract_features but works on already-read bytes (file may be gone)"""
+    try:
+        entropy = calculate_entropy(content)
+        size = len(content)
+        histogram = byte_histogram(content)
+        features = [entropy, size] + histogram
+        return features
+    except Exception as e:
+        print(f"Error extracting features from content: {e}")
+        return None        
 
 if __name__ == "__main__":
     root_dir = "payloads"  # Point to payloads folder
