@@ -45,6 +45,15 @@ def open_directory():
 def execute_engine(file_path, output_text):
     if file_path:
         file_label.config(text=file_path)
+
+        # ✅ Read file BEFORE YARA quarantines it
+        try:
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+        except Exception as e:
+            output_text.insert(END, f"[ML] Could not read file: {e}\n")
+            file_content = None
+
         process = subprocess.Popen([ENGINE_PATH, file_path], stdout=subprocess.PIPE, universal_newlines=True)
         while True:
             output_line = process.stdout.readline()
@@ -55,29 +64,32 @@ def execute_engine(file_path, output_text):
                 output_text.see(END)
         process.stdout.close()
         process.wait()
-        run_ml_scan(file_path, output_text) 
+
+        run_ml_scan(file_path, output_text, file_content=file_content)  # ✅ pass content 
 
 def execute_engine_directory(dir_path, output_text):
     if not dir_path:
         file_label.config(text="No path selected")
         return
-
     if not os.path.isdir(dir_path):
         output_text.insert(END, f"[Dir] Not a directory: {dir_path}\n")
         return
 
-    # Walk through directory and scan each file with the engine ONLY
     for root_dir, _, files in os.walk(dir_path):
         for fname in files:
             fpath = os.path.join(root_dir, fname)
             output_text.insert(END, f"\n[+] Scanning: {fpath}\n")
             output_text.see(END)
 
-            process = subprocess.Popen(
-                [ENGINE_PATH, fpath],
-                stdout=subprocess.PIPE,
-                universal_newlines=True
-            )
+            # ✅ Read file BEFORE YARA quarantines it
+            try:
+                with open(fpath, 'rb') as f:
+                    file_content = f.read()
+            except Exception as e:
+                output_text.insert(END, f"[ML] Could not read file: {e}\n")
+                file_content = None
+
+            process = subprocess.Popen([ENGINE_PATH, fpath], stdout=subprocess.PIPE, universal_newlines=True)
             while True:
                 output_line = process.stdout.readline()
                 if output_line == '' and process.poll() is not None:
@@ -87,7 +99,8 @@ def execute_engine_directory(dir_path, output_text):
                     output_text.see(END)
             process.stdout.close()
             process.wait()
-            run_ml_scan(fpath, output_text)  
+
+            run_ml_scan(fpath, output_text, file_content=file_content)  # ✅ pass content 
        
 def execute_engine_rtm(file_path,output_text):
     if file_path:
